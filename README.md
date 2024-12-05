@@ -1,3 +1,3 @@
 ## june
 
-J unedited, 
+J unedited, a makefile style tool to interpret build rules
