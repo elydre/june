@@ -161,7 +161,7 @@ char *expand_vars(char *src, int lnb) {
             line = tmp;
             free(name);
         } else {
-            printf("June: %s: Undefined variable\n", name);
+            printf("June: line %d: %s: Undefined variable\n", lnb, name);
             free(name);
             free(line);
             return NULL;
