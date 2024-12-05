@@ -1,0 +1,22 @@
+CC = gcc
+LD = ld
+
+CFLAGS = -Wall -Wextra -Werror
+
+ODIR = out
+SDIR = src
+
+SRC = $[find $SDIR *.c] // comment
+OBJ = $[nick -e o -d $ODIR $SRC] # comment
+
+NAME = test
+
+[c -> o]:
+    $CC -c $.c -o $.o 
+
+test: $OBJ
+    $LD $OBJ -o $NAME
+
+list:
+    echo $OBJ
+    echo $SRC
