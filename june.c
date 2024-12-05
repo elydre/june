@@ -29,7 +29,7 @@ var_t *g_vars;
 #define MAX_VARS  1024
 
 char *get_var(char *name) {
-    for (int i = 0; g_vars && g_vars[i].name; i++) {
+    for (int i = 0; g_vars[i].name; i++) {
         if (!strcmp(g_vars[i].name, name))
             return g_vars[i].value;
     }
@@ -38,23 +38,31 @@ char *get_var(char *name) {
 }
 
 int set_var(char *name, char *value) {
-    for (int i = 0; g_vars && g_vars[i].name; i++) {
+    for (int i = 0; g_vars[i].name; i++) {
         if (!strcmp(g_vars[i].name, name)) {
             free(g_vars[i].value);
-            g_vars[i].value = strdup(value);
+            g_vars[i].value = value;
+            free(name);
             return 0;
         }
     }
 
-    for (int i = 0; g_vars && g_vars[i].name; i++) {
+    for (int i = 0; i < MAX_VARS; i++) {
         if (!g_vars[i].name) {
-            g_vars[i].name = strdup(name);
-            g_vars[i].value = strdup(value);
+            g_vars[i].name = name;
+            g_vars[i].value = value;
             return 0;
         }
     }
 
     return 1;
+}
+
+void free_gvar() {
+    for (int i = 0; g_vars[i].name; i++) {
+        free(g_vars[i].name);
+        free(g_vars[i].value);
+    }
 }
 
 void print_rule(rule_t *rule) {
@@ -84,16 +92,16 @@ bool tream_line(char *sline, char **line) {
         indent = true;
         (*line)++;
     }
-    
-    int len = strlen(*line);
-    while (len > 0 && isspace((*line)[len - 1]))
-        (*line)[--len] = '\0';
 
     if ((tmp = strchr(*line, '/')) && tmp[1] == '/')
         *tmp = '\0';
 
     if ((tmp = strchr(*line, '#')))
         *tmp = '\0';
+
+    int len = strlen(*line);
+    while (len > 0 && isspace((*line)[len - 1]))
+        (*line)[--len] = '\0';
 
     return indent;
 }
@@ -153,13 +161,15 @@ char *expand_vars(char *src, int lnb) {
         char *name = strndup(line + start, i - start);
 
         if ((value = get_var(name))) {
-            char *tmp = malloc(strlen(line) + strlen(value));
-            strncpy(tmp, line, start - 2);
+            int len = strlen(value);
+            char *tmp = malloc(strlen(line) + len);
+            strncpy(tmp, line, start - 1);
             strcpy(tmp + start - 1, value);
-            strcpy(tmp + start - 1 + strlen(value), line + i);
+            strcpy(tmp + start - 1 + len, line + i);
             free(line);
-            line = tmp;
             free(name);
+            i = start + len - 2;
+            line = tmp;
         } else {
             printf("June: line %d: %s: Undefined variable\n", lnb, name);
             free(name);
@@ -182,7 +192,6 @@ int interp_file(FILE *f) {
         if (*line == '\0')
             continue;
 
-        printf("%d: %s\n", indent, line);
 
         if (indent == false) {
             line = expand_vars(line, lnb);
@@ -190,8 +199,40 @@ int interp_file(FILE *f) {
                 free(sline);
                 return 1;
             }
-            printf("-> %s\n", line);
+            printf("%s\n", line);
+
+            for (int i = 0; line[i]; i++) {
+                if (isspace(line[i]) || line[i] == '=') {
+                    int j = i;
+                    while (isspace(line[j]))
+                        j++;
+                    if (line[j++] != '=')
+                        break;
+                    while (isspace(line[j]))
+                        j++;
+                    if (line[j] == '\0') {
+                        printf("June: line %d: Invalid variable assignment\n", lnb);
+                        free(line);
+                        free(sline);
+                        return 1;
+                    }
+                    char *name = strndup(line, i);
+                    char *value = strdup(line + j);
+                    if (set_var(name, value)) {
+                        printf("June: line %d: Too many variables\n", lnb);
+                        free(name);
+                        free(value);
+                        free(line);
+                        free(sline);
+                        return 1;
+                    }
+                    break;                 
+                }
+            }       
+
             free(line);
+        } else {
+            printf("    %s\n", line);
         }
     }
 
@@ -228,9 +269,7 @@ int main(int argc, char **argv) {
     for (int i = 0; g_rules && g_rules[i].name; i++)
         print_rule(g_rules + i);
 
-    for (int i = 0; g_vars && g_vars[i].name; i++)
-        printf("VAR: '%s' = '%s'\n", g_vars[i].name, g_vars[i].value);
-
+    free_gvar();
     free(g_rules);
     free(g_vars);
 
