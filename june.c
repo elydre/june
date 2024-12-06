@@ -414,6 +414,54 @@ int interp_file(FILE *f) {
 
 /*********************************
  *                              *
+ *        Rule Execution        *
+ *                              *
+*********************************/
+
+int exec_rule(rule_t *rule, int depth) {
+    for (int j = 0; j < depth; j++)
+        putchar(' ');
+    printf("EXEC %s\n", rule->name);
+
+    if (depth > 100) {
+        printf("June: %s: Recursion limit reached\n", rule->name);
+        return 1;
+    }
+
+    for (int i = 0; rule->deps[i]; i++) {
+        rule_t *dep = NULL;
+        for (int j = 0; g_rules[j].name; j++) {
+            if (!strcmp(g_rules[j].name, rule->deps[i])) {
+                dep = g_rules + j;
+                break;
+            }
+        }
+        if (!dep) {
+            printf("  Dependency not found: %s\n", rule->deps[i]);
+            return 1;
+        }
+        if (exec_rule(dep, depth + 1)) {
+            return 1;
+        }
+    }
+
+    if (!rule->cmds) {
+        printf("  No commands\n");
+        return 0;
+    }
+
+    for (int i = 0; rule->cmds[i]; i++) {
+        for (int j = 0; j < depth; j++)
+            putchar(' ');
+        printf("%s\n", rule->cmds[i]);
+        // system(rule->cmds[i]);
+    }
+
+    return 0;
+}
+
+/*********************************
+ *                              *
  *        User Interface        *
  *                              *
 *********************************/
@@ -449,6 +497,9 @@ int main(int argc, char **argv) {
     printf("\n============ Rules ============\n");
     for (int i = 0; g_rules && g_rules[i].name; i++)
         print_rule(g_rules + i);
+    printf("================================\n\n");
+
+    exec_rule(g_rules, 0);
 
     free_globals();
     free(g_rules);

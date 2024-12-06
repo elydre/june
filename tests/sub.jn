@@ -1,0 +1,20 @@
+PRINT = echo
+MSG = "Hello, world!"
+
+all: sub1 sub2
+    $PRINT $MSG
+
+sub1: sub3
+    $PRINT "sub1"
+
+sub2: sub4 sub5
+    $PRINT "sub2"
+
+sub3: sub5
+    $PRINT "sub3"
+
+sub4: sub5
+    $PRINT "sub4"
+
+sub5:
+    $PRINT "sub5"
