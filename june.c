@@ -1,8 +1,11 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <ctype.h>
+
+#define VIRTUAL 1
 
 typedef struct {
     int is_patern;
@@ -92,50 +95,6 @@ void free_globals() {
     }
 }
 
-/*********************************
- *                              *
- *      Utility Functions       *
- *                              *
-*********************************/
-
-int is_valid_varname(char *name) {
-    if (!isalpha(*name) && *name != '_')
-        return 0;
-
-    for (int i = 1; name[i]; i++) {
-        if (!isalnum(name[i]) && name[i] != '_')
-            return 0;
-    }
-
-    return 1;
-}
-
-int is_valid_filename(char *name) {
-    for (int i = 0; name[i]; i++) {
-        if (!isalnum(name[i]) &&
-            name[i] != '.' &&
-            name[i] != '_' &&
-            name[i] != '-' &&
-            name[i] != '/'
-        ) return 0;
-    }
-
-    return 1;
-}
-
-char *read_line(FILE *f) {
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t len;
-
-    if ((len = getline(&line, &cap, f)) <= 0) {
-        free(line);
-        return NULL;
-    }
-
-    return line;
-}
-
 void print_rule(rule_t *rule) {
     if (rule->is_patern) {
         printf("RULE: %s -> %s\n", rule->patern.src_ext, rule->patern.dst_ext);
@@ -151,6 +110,88 @@ void print_rule(rule_t *rule) {
 
     printf("\n");
 }
+
+/*********************************
+ *                              *
+ *    File Utility Functions    *
+ *                              *
+*********************************/
+
+char *read_line(FILE *f) {
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t len;
+
+    if ((len = getline(&line, &cap, f)) <= 0) {
+        free(line);
+        return NULL;
+    }
+
+    return line;
+}
+
+int file_exists(char *name) {
+    if (!VIRTUAL && access(name, F_OK) == -1)
+        return 0;
+    return 1;
+}
+
+/*********************************
+ *                              *
+ *   String Utility Functions   *
+ *                              *
+*********************************/
+
+int is_valid_varname(char *name) {
+    if (*name == '\0')
+        return 0;
+
+    if (!isalpha(*name) && *name != '_')
+        return 0;
+
+    for (int i = 1; name[i]; i++) {
+        if (!isalnum(name[i]) && name[i] != '_')
+            return 0;
+    }
+
+    return 1;
+}
+
+int is_valid_filename(char *name) {
+    if (*name == '\0')
+        return 0;
+
+    for (int i = 0; name[i]; i++) {
+        if (!isalnum(name[i]) &&
+            name[i] != '.' &&
+            name[i] != '_' &&
+            name[i] != '-' &&
+            name[i] != '/'
+        ) return 0;
+    }
+
+    return 1;
+}
+
+char *rm_ext(char *name) {
+    char *tmp = strdup(name);
+    char *ext = strrchr(tmp, '.');
+    if (ext)
+        *ext = '\0';
+    return tmp;
+}
+
+int is_right_ext(char *name, char *ext) {
+    // ext does not contain the dot
+    char *tmp = strrchr(name, '.');
+
+    if (!tmp)
+        return 0;
+
+    return !strcmp(tmp + 1, ext);
+}
+
+
 
 char *str_trim(char *str) {
     int len = strlen(str);
@@ -293,7 +334,10 @@ char *expand_vars(char *src, int lnb) {
 
         char *name = strndup(line + start, i - start);
 
-        if ((value = get_var(name))) {
+        if (strcmp(name, "0") == 0) {
+            free(name);
+            continue;
+        } else if ((value = get_var(name))) {
             int len = strlen(value);
             char *tmp = malloc(strlen(line) + len);
             strncpy(tmp, line, start - 1);
@@ -312,6 +356,40 @@ char *expand_vars(char *src, int lnb) {
     }
 
     return line;
+}
+
+int compute_patern(char *name, int lnb, char **src_ext, char **dst_ext) {
+    // name: src_ext -> dst_ext || dst_ext <- src_ext
+    char *tmp;
+
+    if ((tmp = strstr(name, "->"))) {
+        *tmp = '\0';
+        *src_ext = strdup(str_trim(name));
+        *dst_ext = strdup(str_triml(tmp + 2));
+    } else if ((tmp = strstr(name, "<-"))){
+        *tmp = '\0';
+        *dst_ext = strdup(str_trim(name));
+        *src_ext = strdup(str_triml(tmp + 2));
+    } else {
+        printf("June: line %d: '%s': Invalid patern\n", lnb, name);
+        return 1;
+    }
+
+    if (!is_valid_filename(*src_ext)) {
+        printf("June: line %d: '%s': Invalid source extension\n", lnb, *src_ext);
+        free(*src_ext);
+        free(*dst_ext);
+        return 1;
+    }
+
+    if (!is_valid_filename(*dst_ext)) {
+        printf("June: line %d: '%s': Invalid destination extension\n", lnb, *dst_ext);
+        free(*src_ext);
+        free(*dst_ext);
+        return 1;
+    }
+
+    return 0;
 }
 
 int interp_file(FILE *f) {
@@ -341,7 +419,7 @@ int interp_file(FILE *f) {
                 *tmp = '\0';
                 char *name = strdup(str_trim(line));
                 if (!is_valid_varname(name)) {
-                    printf("June: line %d: %s: Invalid variable name\n", lnb, name);
+                    printf("June: line %d: '%s': Invalid variable name\n", lnb, name);
                     free(sline);
                     free(line);
                     free(name);
@@ -351,25 +429,42 @@ int interp_file(FILE *f) {
                 rule = NULL;
             } else if ((tmp = strchr(line, ':'))) {
                 *tmp = '\0';
-                char *name = strdup(str_trim(line));
-                if (!is_valid_filename(name)) {
-                    printf("June: line %d: %s: Invalid rule name\n", lnb, name);
-                    free(sline);
-                    free(line);
-                    free(name);
-                    return 1;
+                char *src_ext, *dst_ext, *name = str_trim(line);
+                int is_patern = name[0] == '[' && name[strlen(name) - 1] == ']';
+
+                if (is_patern) {
+                    tmp--;
+                    *tmp = '\0';
+                    if (compute_patern(str_triml(str_trim(++name)), lnb, &src_ext, &dst_ext)) {
+                        free(sline);
+                        free(line);
+                        return 1;
+                    }
+                } else {
+                    if (!is_valid_filename(name)) {
+                        printf("June: line %d: '%s': Invalid rule name\n", lnb, name);
+                        free(sline);
+                        free(line);
+                        return 1;
+                    }
+                    name = strdup(name);
                 }
 
                 char **deps = str_split(tmp + 1, ' ');
                 for (int i = 0; deps[i]; i++) {
                     if (!is_valid_filename(deps[i])) {
-                        printf("June: line %d: %s: Invalid dependency name\n", lnb, deps[i]);
-                        free(sline);
-                        free(line);
+                        printf("June: line %d: '%s': Invalid dependency name\n", lnb, deps[i]);
+                        if (is_patern) {
+                            free(src_ext);
+                            free(dst_ext);
+                        } else {
+                            free(name);
+                        }
                         for (int j = 0; deps[j]; j++)
                             free(deps[j]);
+                        free(sline);
+                        free(line);
                         free(deps);
-                        free(name);
                         return 1;
                     }
                 }
@@ -377,8 +472,15 @@ int interp_file(FILE *f) {
                 rule = g_rules;
                 while (rule->name)
                     rule++;
-                rule->name = name;
+                rule->is_patern = is_patern;
+                if (is_patern) {
+                    rule->patern.src_ext = src_ext;
+                    rule->patern.dst_ext = dst_ext;
+                } else {
+                    rule->name = name;
+                }
                 rule->deps = deps;
+                rule->cmds = NULL;
             } else {
                 printf("June: line %d: Invalid statement\n", lnb);
                 free(sline);
@@ -418,10 +520,29 @@ int interp_file(FILE *f) {
  *                              *
 *********************************/
 
-int exec_rule(rule_t *rule, int depth) {
+char *expend_var0(char *line, char *val) {
+    char *tmp, *start = strstr(line, "$0");
+
+    if (!start) {
+        return line;
+    }
+    
+    tmp = malloc(strlen(line) + strlen(val));
+    strncpy(tmp, line, start - line);
+    strcpy(tmp + (start - line), val);
+    strcpy(tmp + (start - line) + strlen(val), start + 2);
+
+    free(line);
+    return expend_var0(tmp, val);
+}
+
+int exec_rule_rec(rule_t *rule, int depth, char *fname) {
     for (int j = 0; j < depth; j++)
         putchar(' ');
-    printf("EXEC %s\n", rule->name);
+    if (rule->is_patern)
+        printf("[%s.%s -> %s.%s]\n", fname, rule->patern.src_ext, fname, rule->patern.dst_ext);
+    else
+        printf("[%s]\n", rule->name);
 
     if (depth > 100) {
         printf("June: %s: Recursion limit reached\n", rule->name);
@@ -431,18 +552,51 @@ int exec_rule(rule_t *rule, int depth) {
     for (int i = 0; rule->deps[i]; i++) {
         rule_t *dep = NULL;
         for (int j = 0; g_rules[j].name; j++) {
-            if (!strcmp(g_rules[j].name, rule->deps[i])) {
+            if (!g_rules[j].is_patern && !strcmp(g_rules[j].name, rule->deps[i])) {
                 dep = g_rules + j;
                 break;
             }
         }
+
+        if (dep) {
+            if (exec_rule_rec(dep, depth + 1, dep->name))
+                return 1;
+            continue;
+        }
+
+        char *noext = rm_ext(rule->deps[i]);
+
+        // search for patern
+        for (int j = 0; g_rules[j].name; j++) {
+            if (g_rules[j].is_patern &&
+                    is_right_ext(rule->deps[i], g_rules[j].patern.dst_ext)
+            ) {
+                char *src = malloc(strlen(noext) + strlen(g_rules[j].patern.src_ext) + 1);
+                strcpy(src, noext);
+                strcat(src, g_rules[j].patern.src_ext);
+
+                if (file_exists(src)) {
+                    dep = g_rules + j;
+                    free(src);
+                    break;
+                }
+
+                free(src);
+            }
+        }
+
         if (!dep) {
-            printf("  Dependency not found: %s\n", rule->deps[i]);
+            printf("June: %s: Dependency '%s' not found\n", rule->name, rule->deps[i]);
+            free(noext);
             return 1;
         }
-        if (exec_rule(dep, depth + 1)) {
+
+        if (exec_rule_rec(dep, depth + 1, noext)) {
+            free(noext);
             return 1;
         }
+
+        free(noext);
     }
 
     if (!rule->cmds) {
@@ -453,12 +607,41 @@ int exec_rule(rule_t *rule, int depth) {
     for (int i = 0; rule->cmds[i]; i++) {
         for (int j = 0; j < depth; j++)
             putchar(' ');
-        printf("%s\n", rule->cmds[i]);
-        // system(rule->cmds[i]);
+        char *cmd = expend_var0(strdup(rule->cmds[i]), fname);
+        printf("%s\n", cmd);
+        free(cmd);
     }
 
     return 0;
 }
+
+int exec_rule(char *name) {
+    rule_t *rule;
+    
+    if (!name) {
+        rule = g_rules;
+        while (rule->is_patern)
+            rule++;
+        if (!rule->name) {
+            printf("June: No default rule found\n");
+            return 1;
+        }
+    } else {
+        rule = NULL;
+        for (int i = 0; g_rules[i].name; i++) {
+            if (!strcmp(g_rules[i].name, name) && !g_rules[i].is_patern) {
+                rule = g_rules + i;
+                break;
+            }
+        }
+        if (!rule) {
+            printf("June: '%s': Rule not found\n", name);
+            return 1;
+        }
+    }
+
+    return exec_rule_rec(rule, 0, rule->name);
+}       
 
 /*********************************
  *                              *
@@ -467,8 +650,8 @@ int exec_rule(rule_t *rule, int depth) {
 *********************************/
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        printf("Usage: june <file>\n");
+    if (argc < 2 || argc > 3) {
+        printf("Usage: june <file> [rule]\n");
         return 1;
     }
 
@@ -499,7 +682,7 @@ int main(int argc, char **argv) {
         print_rule(g_rules + i);
     printf("================================\n\n");
 
-    exec_rule(g_rules, 0);
+    exec_rule(argv[2]);
 
     free_globals();
     free(g_rules);
