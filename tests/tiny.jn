@@ -1,0 +1,10 @@
+PRINT = echo
+MSG = "Hello, world!"
+SUB = Subroutine
+
+all: sub
+    $PRINT $MSG
+    $PRINT coucou
+
+sub:
+    $PRINT $SUB
