@@ -1,3 +1,4 @@
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,7 +6,7 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#define VIRTUAL 1
+#define VIRTUAL 0
 
 typedef struct {
     int is_patern;
@@ -134,6 +135,25 @@ int file_exists(char *name) {
     if (!VIRTUAL && access(name, F_OK) == -1)
         return 0;
     return 1;
+}
+
+FILE *chdir_and_open(char *name, char *mode) {
+    char *dir = strdup(name);
+    char *tmp = strrchr(dir, '/');
+    FILE *f = fopen(name, mode);
+    if (tmp) {
+        *tmp = '\0';
+        chdir(dir);
+    }
+    free(dir);
+    return f;
+}
+
+long file_last_modif(char *name) {
+    struct stat buf;
+    if (stat(name, &buf) == -1)
+        return -1;
+    return buf.st_mtime;
 }
 
 /*********************************
@@ -536,13 +556,56 @@ char *expend_var0(char *line, char *val) {
     return expend_var0(tmp, val);
 }
 
+int is_up_to_date(char *name, rule_t *rule) {
+    if (!rule->is_patern && !file_exists(name)) {
+        return 0;
+    }
+
+    for (int i = 0; rule->deps[i]; i++) {
+        if (!file_exists(rule->deps[i])) {
+            return 0;
+        }
+        if (file_last_modif(name) < file_last_modif(rule->deps[i])) {
+            return 0;
+        }
+    }
+
+    if (!rule->is_patern) {
+        printf("June: %s: Up to date\n", name);
+        return 1;
+    }
+
+    char *noext = rm_ext(name);
+    char *in = malloc(strlen(noext) + strlen(rule->patern.src_ext) + 2);
+    char *out = malloc(strlen(noext) + strlen(rule->patern.dst_ext) + 2);
+
+    sprintf(in, "%s.%s", noext, rule->patern.src_ext);
+    sprintf(out, "%s.%s", noext, rule->patern.dst_ext);
+
+    if (!file_exists(in) || !file_exists(out) || file_last_modif(in) > file_last_modif(out)) {
+        free(noext);
+        free(in);
+        free(out);
+        return 0;
+    }
+
+    printf("June: %s: Up to date\n", out);
+    free(noext);
+    free(in);
+    free(out);
+
+    return 1;
+}
+
 int exec_rule_rec(rule_t *rule, int depth, char *fname) {
+    /*
     for (int j = 0; j < depth; j++)
         putchar(' ');
     if (rule->is_patern)
         printf("[%s.%s -> %s.%s]\n", fname, rule->patern.src_ext, fname, rule->patern.dst_ext);
     else
         printf("[%s]\n", rule->name);
+    */
 
     if (depth > 100) {
         printf("June: %s: Recursion limit reached\n", rule->name);
@@ -571,22 +634,20 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
             if (g_rules[j].is_patern &&
                     is_right_ext(rule->deps[i], g_rules[j].patern.dst_ext)
             ) {
-                char *src = malloc(strlen(noext) + strlen(g_rules[j].patern.src_ext) + 1);
-                strcpy(src, noext);
-                strcat(src, g_rules[j].patern.src_ext);
+                char *src = malloc(strlen(noext) + strlen(g_rules[j].patern.src_ext) + 2);
+                sprintf(src, "%s.%s", noext, g_rules[j].patern.src_ext);
 
                 if (file_exists(src)) {
                     dep = g_rules + j;
                     free(src);
                     break;
                 }
-
                 free(src);
             }
         }
 
         if (!dep) {
-            printf("June: %s: Dependency '%s' not found\n", rule->name, rule->deps[i]);
+            printf("June: %s: %s: Rule not found\n", rule->name, rule->deps[i]);
             free(noext);
             return 1;
         }
@@ -599,16 +660,23 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
         free(noext);
     }
 
+    if (is_up_to_date(fname, rule)) {
+        return 0;
+    }
+
     if (!rule->cmds) {
         printf("  No commands\n");
         return 0;
     }
 
     for (int i = 0; rule->cmds[i]; i++) {
-        for (int j = 0; j < depth; j++)
-            putchar(' ');
         char *cmd = expend_var0(strdup(rule->cmds[i]), fname);
         printf("%s\n", cmd);
+        if (system(cmd)) {
+            printf("June: %s: Command failed\n", rule->name);
+            free(cmd);
+            return 1;
+        }
         free(cmd);
     }
 
@@ -658,7 +726,7 @@ int main(int argc, char **argv) {
     g_rules = calloc(MAX_RULES, sizeof(rule_t));
     g_vars = calloc(MAX_VARS, sizeof(var_t));
 
-    FILE *f = fopen(argv[1], "r");
+    FILE *f = chdir_and_open(argv[1], "r");
 
     if (!f) {
         printf("June: %s: Failed to open file\n", argv[1]);

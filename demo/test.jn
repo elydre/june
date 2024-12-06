@@ -1,5 +1,4 @@
 CC = gcc
-LD = ld
 
 CFLAGS = -Wall -Wextra -Werror
 
@@ -15,7 +14,7 @@ NAME = test
     $CC -c $0.c -o $0.o 
 
 test: $OBJ
-    $LD $OBJ -o $NAME
+    $CC $OBJ -o $NAME
 
 list:
     echo $OBJ
