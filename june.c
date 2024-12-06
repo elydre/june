@@ -1,5 +1,4 @@
 #include <sys/stat.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -287,8 +286,8 @@ jsf_t g_jsf[] = {
  *                              *
 *********************************/
 
-bool tream_line(char *sline, char **line) {
-    bool indent;
+int tream_line(char *sline, char **line) {
+    int indent;
     char *tmp;
 
     *line = sline;
@@ -415,7 +414,7 @@ int compute_patern(char *name, int lnb, char **src_ext, char **dst_ext) {
 int interp_file(FILE *f) {
     char *line, *sline = NULL;
     rule_t *rule = NULL;
-    bool indent;
+    int indent;
     int lnb = 0;
 
     while ((free(sline), lnb++, sline = read_line(f))) {
@@ -431,7 +430,7 @@ int interp_file(FILE *f) {
             return 1;
         }
 
-        if (indent == false) {
+        if (indent == 0) {
             printf("%s\n", line);
 
             char *tmp;
