@@ -22,11 +22,22 @@ typedef struct {
     char *value;
 } var_t;
 
+typedef struct {
+    char *name;
+    char *(*func)(int, char **);
+} jsf_t;
+
 rule_t *g_rules;
 var_t *g_vars;
 
 #define MAX_RULES 256
 #define MAX_VARS  1024
+
+/*********************************
+ *                              *
+ *   Variable Access Functions  *
+ *                              *
+*********************************/
 
 char *get_var(char *name) {
     for (int i = 0; g_vars[i].name; i++) {
@@ -65,6 +76,25 @@ void free_gvar() {
     }
 }
 
+/*********************************
+ *                              *
+ *      Utility Functions       *
+ *                              *
+*********************************/
+
+char *read_line(FILE *f) {
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t len;
+
+    if ((len = getline(&line, &cap, f)) <= 0) {
+        free(line);
+        return NULL;
+    }
+
+    return line;
+}
+
 void print_rule(rule_t *rule) {
     if (rule->is_patern) {
         printf("RULE: %s -> %s\n", rule->patern.src_ext, rule->patern.dst_ext);
@@ -81,6 +111,39 @@ void print_rule(rule_t *rule) {
     printf("\n\n");
 }
 
+/*********************************
+ *                              *
+ *      June SubFunctions       *
+ *                              *
+*********************************/
+
+char *jsf_find(int argc, char **argv) {
+    // usage: find <dir> <pattern>
+    printf("find: %d\n", argc);
+    for (int i = 0; i < argc; i++)
+        printf("  %s\n", argv[i]);
+    return strdup("find");
+}
+
+char *jsf_nick(int argc, char **argv) {
+    // usage: nick [-e ext] [-d parent] <name>
+    printf("nick: %d\n", argc);
+    for (int i = 0; i < argc; i++)
+        printf("  %s\n", argv[i]);
+    return strdup("nick");
+}
+
+jsf_t g_jsf[] = {
+    {"find", jsf_find},
+    {"nick", jsf_nick},
+    {NULL, NULL}
+};
+
+/*********************************
+ *                              *
+ *     File Interpretation      *
+ *                              *
+*********************************/
 bool tream_line(char *sline, char **line) {
     bool indent;
     char *tmp;
@@ -104,19 +167,6 @@ bool tream_line(char *sline, char **line) {
         (*line)[--len] = '\0';
 
     return indent;
-}
-
-char *read_line(FILE *f) {
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t len;
-
-    if ((len = getline(&line, &cap, f)) <= 0) {
-        free(line);
-        return NULL;
-    }
-
-    return line;
 }
 
 char *expand_vars(char *src, int lnb) {
@@ -238,6 +288,12 @@ int interp_file(FILE *f) {
 
     return 0;
 }
+
+/*********************************
+ *                              *
+ *        User Interface        *
+ *                              *
+*********************************/
 
 int main(int argc, char **argv) {
     if (argc != 2) {
