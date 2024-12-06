@@ -316,6 +316,7 @@ char *expand_vars(char *src, int lnb) {
 
 int interp_file(FILE *f) {
     char *line, *sline = NULL;
+    rule_t *rule = NULL;
     bool indent;
     int lnb = 0;
 
@@ -325,13 +326,14 @@ int interp_file(FILE *f) {
         if (*line == '\0')
             continue;
 
+        line = expand_vars(line, lnb);
+
+        if (!line) {
+            free(sline);
+            return 1;
+        }
 
         if (indent == false) {
-            line = expand_vars(line, lnb);
-            if (!line) {
-                free(sline);
-                return 1;
-            }
             printf("%s\n", line);
 
             char *tmp;
@@ -346,6 +348,7 @@ int interp_file(FILE *f) {
                     return 1;
                 }
                 set_var(name, strdup(str_triml(tmp + 1)));
+                rule = NULL;
             } else if ((tmp = strchr(line, ':'))) {
                 *tmp = '\0';
                 char *name = strdup(str_trim(line));
@@ -371,8 +374,9 @@ int interp_file(FILE *f) {
                     }
                 }
 
-                rule_t *rule = g_rules;
-                for (; rule->name; rule++);
+                rule = g_rules;
+                while (rule->name)
+                    rule++;
                 rule->name = name;
                 rule->deps = deps;
             } else {
@@ -383,7 +387,25 @@ int interp_file(FILE *f) {
             }
             free(line);
         } else {
-            printf("    %s\n", line);
+            printf("   %s\n", line);
+            if (!rule) {
+                printf("June: line %d: Command without rule\n", lnb);
+                free(sline);
+                free(line);
+                return 1;
+            }
+
+            int count = 0;
+
+            if (!rule->cmds) {
+                rule->cmds = malloc(sizeof(char *) * 2);
+            } else {
+                for (count = 0; rule->cmds[count]; count++);
+                rule->cmds = realloc(rule->cmds, sizeof(char *) * (count + 2));
+            }
+
+            rule->cmds[count] = line;
+            rule->cmds[count + 1] = NULL;
         }
     }
 
