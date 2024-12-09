@@ -6,7 +6,7 @@ CFLAGS = -Wall -Wextra -Werror
 ODIR = out
 SDIR = src
 
-SRC = $[find $SDIR *.c] // comment
+SRC = $[exec find $SDIR "*.c"] // comment
 OBJ = $[nick -e o -d $ODIR $SRC] # comment
 
 NAME = test

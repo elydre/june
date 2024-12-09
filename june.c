@@ -1,11 +1,12 @@
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <ctype.h>
 
-#define JUNE_VERSION "June 1.1 rev 0"
+#define JUNE_VERSION "June 1.2 rev 0"
 
 #define JUNE_USAGE "Usage: june [opts] [-f <file>] [rules]\n"
 #define JUNE_FILE  "jfile"
@@ -270,24 +271,92 @@ char **str_split(char *s, char c) {
  *                              *
 *********************************/
 
-char *jsf_find(int lnb, char **argv) {
-    (void)lnb;
-    // usage: find <dir> <pattern>
-    for (int i = 0; argv[i]; i++)
-        printf("  %s\n", argv[i]);
-    return strdup("abc");
+char *jsf_exec(int lnb, char **argv) {
+    if (!argv[1]) {
+        fprintf(stderr, "June: line %d: exec: Missing command\n", lnb);
+        return NULL;
+    }
+
+    int fds[2];
+
+    if (pipe(fds) == -1) {
+        fprintf(stderr, "June: line %d: exec: Pipe failed\n", lnb);
+        return NULL;
+    }
+
+    int pid = fork();
+
+    if (pid == -1) {
+        fprintf(stderr, "June: line %d: exec: Fork failed\n", lnb);
+        return NULL;
+    }
+
+    if (pid == 0) {
+        close(fds[0]);
+        dup2(fds[1], 1);
+        close(fds[1]);
+        execvp(argv[1], argv + 1);
+        fprintf(stderr, "June: line %d: exec: Command not found\n", lnb);
+        exit(1);
+    }
+
+    close(fds[1]);
+
+    char *data = NULL;
+    char buf[256];
+    int len, flen = 0;
+
+    while ((len = read(fds[0], buf, 256)) > 0) {
+        data = realloc(data, len + flen + 1);
+        strncpy(data + flen, buf, len);
+        flen += len;
+        data[flen] = '\0';
+    }
+
+    close(fds[0]);
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (WIFEXITED(status) && WEXITSTATUS(status)) {
+        fprintf(stderr, "June: line %d: exec: Command failed\n", lnb);
+        free(data);
+        return NULL;
+    }
+
+    for (int i = 0; data[i]; i++) {
+        if (isspace(data[i]))
+            data[i] = ' ';
+    }
+
+    return data;
 }
 
 char *jsf_nick(int lnb, char **argv) {
-    (void)lnb;
-    // usage: nick [-e ext] [-d parent] <name>
-    for (int i = 0; argv[i]; i++)
-        printf("  %s\n", argv[i]);
-    return strdup("def");
+    if (!argv[1] || !argv[2]) {
+        fprintf(stderr, "June: line %d: nick: Missing arguments\n", lnb);
+        return NULL;
+    }
+
+    char *ext = argv[1];
+    char *ret = NULL;
+    int len = 0;
+
+    for (int i = 2; argv[i]; i++) {
+        char *tmp = rm_ext(argv[i]);
+        ret = realloc(ret, len + strlen(tmp) + strlen(ext) + 3);
+        if (len)
+            len += sprintf(ret + len, " %s.%s", tmp, ext);
+        else
+            len = sprintf(ret, "%s.%s", tmp, ext);
+        free(tmp);
+    }
+
+    return ret;
 }
 
 jsf_t g_jsf[] = {
-    {"find", jsf_find},
+    {"exec", jsf_exec},
     {"nick", jsf_nick},
     {NULL, NULL}
 };
@@ -380,6 +449,11 @@ char *expand_vars(char *src, int lnb) {
             tmp = strndup(line + i + 1, j - i - 2); // cause malloc is cool
             subfunc = expand_vars(str_triml(str_trim(tmp)), lnb);
             free(tmp);
+            if (!subfunc) {
+                free(line);
+                return NULL;
+            }
+
             args = str_split(subfunc, ' ');
             free(subfunc);
 
@@ -403,7 +477,6 @@ char *expand_vars(char *src, int lnb) {
             value = func(lnb, args);
 
             if (!value) {
-                fprintf(stderr, "June: line %d: '%s': Subfunction failed\n", lnb, args[0]);
                 for (int j = 0; args[j]; j++)
                     free(args[j]);
                 free(args);

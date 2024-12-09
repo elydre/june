@@ -2,11 +2,10 @@ CC = gcc
 
 CFLAGS = -Wall -Wextra -Werror
 
-ODIR = out
 SDIR = src
 
-SRC = coucou.c main.c
-OBJ = coucou.o main.o # comment
+SRC = $[exec find $SDIR -name *.c]
+OBJ = $[nick o $SRC]
 
 NAME = test
 
