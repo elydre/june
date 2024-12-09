@@ -5,7 +5,14 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#define VIRTUAL 0
+#define JUNE_VERSION "June 1.0 rev 0"
+
+#define JUNE_USAGE "Usage: june [opts] [-f <file>] [rules]\n"
+#define JUNE_FILE  "jfile"
+
+#define MAX_RULES 256
+#define MAX_VARS  1024
+
 
 typedef struct {
     int is_patern;
@@ -30,11 +37,16 @@ typedef struct {
     char *(*func)(int, char **);
 } jsf_t;
 
+typedef struct {
+    int virtual;
+    int debug;
+    char *file;
+    char **rules;
+} juneopt_t;
+
 rule_t *g_rules;
 var_t *g_vars;
-
-#define MAX_RULES 256
-#define MAX_VARS  1024
+juneopt_t g_opt;
 
 /*********************************
  *                              *
@@ -97,18 +109,18 @@ void free_globals() {
 
 void print_rule(rule_t *rule) {
     if (rule->is_patern) {
-        printf("RULE: %s -> %s\n", rule->patern.src_ext, rule->patern.dst_ext);
+        fprintf(stderr, "RULE: %s -> %s\n", rule->patern.src_ext, rule->patern.dst_ext);
     } else {
-        printf("RULE: %s\n", rule->name);
+        fprintf(stderr, "RULE: %s\n", rule->name);
     }
 
     for (int i = 0; rule->deps[i]; i++)
-        printf("  dep %d: %s\n", i, rule->deps[i]);
+        fprintf(stderr, "  -> '%s'\n", rule->deps[i]);
 
     for (int i = 0; rule->cmds && rule->cmds[i]; i++)
-        printf("  cmd %d: %s\n", i, rule->cmds[i]);
+        fprintf(stderr, "  [%d] %s\n", i, rule->cmds[i]);
 
-    printf("\n");
+    fprintf(stderr, "\n");
 }
 
 /*********************************
@@ -131,7 +143,7 @@ char *read_line(FILE *f) {
 }
 
 int file_exists(char *name) {
-    if (!VIRTUAL && access(name, F_OK) == -1)
+    if (!g_opt.virtual && access(name, F_OK) == -1)
         return 0;
     return 1;
 }
@@ -431,8 +443,6 @@ int interp_file(FILE *f) {
         }
 
         if (indent == 0) {
-            printf("%s\n", line);
-
             char *tmp;
             if ((tmp = strchr(line, '='))) {
                 *tmp = '\0';
@@ -508,7 +518,6 @@ int interp_file(FILE *f) {
             }
             free(line);
         } else {
-            printf("   %s\n", line);
             if (!rule) {
                 printf("June: line %d: Command without rule\n", lnb);
                 free(sline);
@@ -545,7 +554,7 @@ char *expend_var0(char *line, char *val) {
     if (!start) {
         return line;
     }
-    
+
     tmp = malloc(strlen(line) + strlen(val));
     strncpy(tmp, line, start - line);
     strcpy(tmp + (start - line), val);
@@ -556,6 +565,10 @@ char *expend_var0(char *line, char *val) {
 }
 
 int is_up_to_date(char *name, rule_t *rule) {
+    if (g_opt.virtual) {
+        return 0;
+    }
+
     if (!rule->is_patern && !file_exists(name)) {
         return 0;
     }
@@ -684,7 +697,7 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
 
 int exec_rule(char *name) {
     rule_t *rule;
-    
+
     if (!name) {
         rule = g_rules;
         while (rule->is_patern)
@@ -708,7 +721,7 @@ int exec_rule(char *name) {
     }
 
     return exec_rule_rec(rule, 0, rule->name);
-}       
+}
 
 /*********************************
  *                              *
@@ -716,44 +729,113 @@ int exec_rule(char *name) {
  *                              *
 *********************************/
 
-int main(int argc, char **argv) {
-    if (argc < 2 || argc > 3) {
-        printf("Usage: june <file> [rule]\n");
-        return 1;
+void print_help(void) {
+    puts(JUNE_USAGE "Options:\n"
+        "  -h    Print this message\n"
+        "  -v    Print version\n"
+        "  -n    Do not use file system\n"
+        "  -f    Specify the file to interpret\n"
+        "  -d    Print debug informations\n"
+    );
+}
+
+void paseargs(int argc, char **argv) {
+    int i = 1;
+
+    memset(&g_opt, 0, sizeof(juneopt_t));
+
+    while (i < argc) {
+        if (argv[i][0] != '-') {
+            break;
+        }
+
+        if (strlen(argv[i]) != 2) {
+            fprintf(stderr, "June: Invalid option %s\n" JUNE_USAGE, argv[i]);
+            exit(1);
+        }
+
+        switch (argv[i][1]) {
+            case 'h':
+                print_help();
+                exit(0);
+            case 'v':
+                puts(JUNE_VERSION);
+                exit(0);
+            case 'n':
+                g_opt.virtual = 1;
+                break;
+            case 'd':
+                g_opt.debug = 1;
+                break;
+            case 'f':
+                if (i + 1 >= argc) {
+                    fprintf(stderr, "June: Missing argument for option 'f'\n" JUNE_USAGE);
+                    exit(1);
+                }
+                if (g_opt.file) {
+                    fprintf(stderr, "June: File already specified\n" JUNE_USAGE);
+                    exit(1);
+                }
+                g_opt.file = argv[++i];
+                break;
+            default:
+                fprintf(stderr, "June: Invalid option -- '%c'\n" JUNE_USAGE, argv[i][1]);
+                exit(1);
+        }
+
+        i++;
     }
+
+    if (g_opt.file == NULL)
+        g_opt.file = JUNE_FILE;
+    g_opt.rules = argv + i;
+}
+
+#define main_error() {ret = 1; goto main_end;}
+
+int main(int argc, char **argv) {
+    paseargs(argc, argv);
 
     g_rules = calloc(MAX_RULES, sizeof(rule_t));
     g_vars = calloc(MAX_VARS, sizeof(var_t));
 
-    FILE *f = chdir_and_open(argv[1], "r");
+    FILE *f = chdir_and_open(g_opt.file, "r");
+
+    int ret = 0;
 
     if (!f) {
-        printf("June: %s: Failed to open file\n", argv[1]);
-        free(g_rules);
-        free(g_vars);
-        return 1;
+        printf("June: %s: Failed to open file\n", g_opt.file);
+        main_error();
     }
 
     if (interp_file(f)) {
         fclose(f);
-        free_globals();
-        free(g_rules);
-        free(g_vars);
-        return 1;
+        main_error();
     }
 
     fclose(f);
 
-    printf("\n============ Rules ============\n");
-    for (int i = 0; g_rules && g_rules[i].name; i++)
-        print_rule(g_rules + i);
-    printf("================================\n\n");
+    if (g_opt.debug) {
+        fprintf(stderr, "============ Rules ============\n");
+        for (int i = 0; g_rules && g_rules[i].name; i++)
+            print_rule(g_rules + i);
+        fprintf(stderr, "================================\n\n");
+    }
 
-    exec_rule(argv[2]);
+    if (*g_opt.rules) {
+        for (int i = 0; g_opt.rules[i]; i++)
+            if (exec_rule(g_opt.rules[i]))
+                main_error();
+    }
+
+    else if (exec_rule(NULL))
+        main_error();
+
+    main_end:
 
     free_globals();
     free(g_rules);
     free(g_vars);
 
-    return 0;
+    return ret;
 }
