@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#define JUNE_VERSION "June 1.0 rev 0"
+#define JUNE_VERSION "June 1.1 rev 0"
 
 #define JUNE_USAGE "Usage: june [opts] [-f <file>] [rules]\n"
 #define JUNE_FILE  "jfile"
@@ -270,20 +270,20 @@ char **str_split(char *s, char c) {
  *                              *
 *********************************/
 
-char *jsf_find(int argc, char **argv) {
+char *jsf_find(int lnb, char **argv) {
+    (void)lnb;
     // usage: find <dir> <pattern>
-    printf("find: %d\n", argc);
-    for (int i = 0; i < argc; i++)
+    for (int i = 0; argv[i]; i++)
         printf("  %s\n", argv[i]);
-    return strdup("find");
+    return strdup("abc");
 }
 
-char *jsf_nick(int argc, char **argv) {
+char *jsf_nick(int lnb, char **argv) {
+    (void)lnb;
     // usage: nick [-e ext] [-d parent] <name>
-    printf("nick: %d\n", argc);
-    for (int i = 0; i < argc; i++)
+    for (int i = 0; argv[i]; i++)
         printf("  %s\n", argv[i]);
-    return strdup("nick");
+    return strdup("def");
 }
 
 jsf_t g_jsf[] = {
@@ -291,6 +291,14 @@ jsf_t g_jsf[] = {
     {"nick", jsf_nick},
     {NULL, NULL}
 };
+
+void *get_jsf(char *name) {
+    for (int i = 0; g_jsf[i].name; i++) {
+        if (!strcmp(g_jsf[i].name, name))
+            return g_jsf[i].func;
+    }
+    return NULL;
+}
 
 /*********************************
  *                              *
@@ -335,7 +343,7 @@ char *expand_vars(char *src, int lnb) {
         int start = ++i;
 
         if (line[i] == '\0') {
-            printf("June: line %d: Invalid variable name\n", lnb);
+            fprintf(stderr, "June: line %d: Invalid variable name\n", lnb);
             free(line);
             return NULL;
         }
@@ -350,7 +358,74 @@ char *expand_vars(char *src, int lnb) {
         }
 
         if (line[i] == '[') {
-            // todo
+            char *tmp, *subfunc, **args;
+
+            // find the closing bracket
+            int count = 1;
+            int j = i + 1;
+            while (line[j] && count) {
+                if (line[j] == '[')
+                    count++;
+                else if (line[j] == ']')
+                    count--;
+                j++;
+            }
+
+            if (count) {
+                fprintf(stderr, "June: line %d: Invalid subfunction\n", lnb);
+                free(line);
+                return NULL;
+            }
+
+            tmp = strndup(line + i + 1, j - i - 2); // cause malloc is cool
+            subfunc = expand_vars(str_triml(str_trim(tmp)), lnb);
+            free(tmp);
+            args = str_split(subfunc, ' ');
+            free(subfunc);
+
+            if (!args) {
+                fprintf(stderr, "June: line %d: Invalid subfunction\n", lnb);
+                free(line);
+                return NULL;
+            }
+
+            char *(*func)(int, char **) = get_jsf(args[0]);
+
+            if (!func) {
+                fprintf(stderr, "June: line %d: '%s': Subfunction not found\n", lnb, args[0]);
+                for (int j = 0; args[j]; j++)
+                    free(args[j]);
+                free(args);
+                free(line);
+                return NULL;
+            }
+
+            value = func(lnb, args);
+
+            if (!value) {
+                fprintf(stderr, "June: line %d: '%s': Subfunction failed\n", lnb, args[0]);
+                for (int j = 0; args[j]; j++)
+                    free(args[j]);
+                free(args);
+                free(line);
+                return NULL;
+            }
+
+            for (int j = 0; args[j]; j++)
+                free(args[j]);
+            free(args);
+
+            int len = strlen(value);
+            char *tmp2 = malloc(strlen(line) + len);
+            strncpy(tmp2, line, start - 1);
+            strcpy(tmp2 + start - 1, value);
+
+            strcpy(tmp2 + start - 1 + len, line + j);
+            free(value);
+            free(line);
+
+            i = start + len - 2;
+            line = tmp2;
             continue;
         }
 
@@ -358,7 +433,7 @@ char *expand_vars(char *src, int lnb) {
             i++;
 
         if (i == start) {
-            printf("June: line %d: Invalid variable name\n", lnb);
+            fprintf(stderr, "June: line %d: Invalid variable name\n", lnb);
             free(line);
             return NULL;
         }
@@ -379,7 +454,7 @@ char *expand_vars(char *src, int lnb) {
             i = start + len - 2;
             line = tmp;
         } else {
-            printf("June: line %d: %s: Undefined variable\n", lnb, name);
+            fprintf(stderr, "June: line %d: %s: Undefined variable\n", lnb, name);
             free(name);
             free(line);
             return NULL;
@@ -402,19 +477,19 @@ int compute_patern(char *name, int lnb, char **src_ext, char **dst_ext) {
         *dst_ext = strdup(str_trim(name));
         *src_ext = strdup(str_triml(tmp + 2));
     } else {
-        printf("June: line %d: '%s': Invalid patern\n", lnb, name);
+        fprintf(stderr, "June: line %d: '%s': Invalid patern\n", lnb, name);
         return 1;
     }
 
     if (!is_valid_filename(*src_ext)) {
-        printf("June: line %d: '%s': Invalid source extension\n", lnb, *src_ext);
+        fprintf(stderr, "June: line %d: '%s': Invalid source extension\n", lnb, *src_ext);
         free(*src_ext);
         free(*dst_ext);
         return 1;
     }
 
     if (!is_valid_filename(*dst_ext)) {
-        printf("June: line %d: '%s': Invalid destination extension\n", lnb, *dst_ext);
+        fprintf(stderr, "June: line %d: '%s': Invalid destination extension\n", lnb, *dst_ext);
         free(*src_ext);
         free(*dst_ext);
         return 1;
@@ -448,7 +523,7 @@ int interp_file(FILE *f) {
                 *tmp = '\0';
                 char *name = strdup(str_trim(line));
                 if (!is_valid_varname(name)) {
-                    printf("June: line %d: '%s': Invalid variable name\n", lnb, name);
+                    fprintf(stderr, "June: line %d: '%s': Invalid variable name\n", lnb, name);
                     free(sline);
                     free(line);
                     free(name);
@@ -471,7 +546,7 @@ int interp_file(FILE *f) {
                     }
                 } else {
                     if (!is_valid_filename(name)) {
-                        printf("June: line %d: '%s': Invalid rule name\n", lnb, name);
+                        fprintf(stderr, "June: line %d: '%s': Invalid rule name\n", lnb, name);
                         free(sline);
                         free(line);
                         return 1;
@@ -482,7 +557,7 @@ int interp_file(FILE *f) {
                 char **deps = str_split(tmp + 1, ' ');
                 for (int i = 0; deps[i]; i++) {
                     if (!is_valid_filename(deps[i])) {
-                        printf("June: line %d: '%s': Invalid dependency name\n", lnb, deps[i]);
+                        fprintf(stderr, "June: line %d: '%s': Invalid dependency name\n", lnb, deps[i]);
                         if (is_patern) {
                             free(src_ext);
                             free(dst_ext);
@@ -511,7 +586,7 @@ int interp_file(FILE *f) {
                 rule->deps = deps;
                 rule->cmds = NULL;
             } else {
-                printf("June: line %d: Invalid statement\n", lnb);
+                fprintf(stderr, "June: line %d: Invalid statement\n", lnb);
                 free(sline);
                 free(line);
                 return 1;
@@ -519,7 +594,7 @@ int interp_file(FILE *f) {
             free(line);
         } else {
             if (!rule) {
-                printf("June: line %d: Command without rule\n", lnb);
+                fprintf(stderr, "June: line %d: Command without rule\n", lnb);
                 free(sline);
                 free(line);
                 return 1;
@@ -620,7 +695,7 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
     */
 
     if (depth > 100) {
-        printf("June: %s: Recursion limit reached\n", rule->name);
+        fprintf(stderr, "June: %s: Recursion limit reached\n", rule->name);
         return 1;
     }
 
@@ -659,7 +734,7 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
         }
 
         if (!dep) {
-            printf("June: %s: %s: Rule not found\n", rule->name, rule->deps[i]);
+            fprintf(stderr, "June: %s: %s: Rule not found\n", rule->name, rule->deps[i]);
             free(noext);
             return 1;
         }
@@ -685,7 +760,7 @@ int exec_rule_rec(rule_t *rule, int depth, char *fname) {
         char *cmd = expend_var0(strdup(rule->cmds[i]), fname);
         printf("%s\n", cmd);
         if (system(cmd)) {
-            printf("June: %s: Command failed\n", rule->name);
+            fprintf(stderr, "June: %s: Command failed\n", rule->name);
             free(cmd);
             return 1;
         }
@@ -703,7 +778,7 @@ int exec_rule(char *name) {
         while (rule->is_patern)
             rule++;
         if (!rule->name) {
-            printf("June: No default rule found\n");
+            fprintf(stderr, "June: No default rule found\n");
             return 1;
         }
     } else {
@@ -715,7 +790,7 @@ int exec_rule(char *name) {
             }
         }
         if (!rule) {
-            printf("June: '%s': Rule not found\n", name);
+            fprintf(stderr, "June: '%s': Rule not found\n", name);
             return 1;
         }
     }
@@ -816,7 +891,10 @@ int main(int argc, char **argv) {
     fclose(f);
 
     if (g_opt.debug) {
-        fprintf(stderr, "============ Rules ============\n");
+        fprintf(stderr, "============ Variables ============\n\n");
+        for (int i = 0; g_vars[i].name; i++)
+            fprintf(stderr, "%s\t= %s\n", g_vars[i].name, g_vars[i].value);
+        fprintf(stderr, "\n============ Rules ============\n\n");
         for (int i = 0; g_rules && g_rules[i].name; i++)
             print_rule(g_rules + i);
         fprintf(stderr, "================================\n\n");
